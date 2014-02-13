@@ -1,0 +1,14 @@
+################################################################################
+#
+# Test bench for the various list-processing routines
+#
+# Authors:
+#   Karl Gluck
+#
+#------------------------------------------------------------------------------- 
+package require tcltools
+package require tcltools.diagnostics
+
+@on describe
+source [tcltools_path src lists.tcl]
+@off describe

@@ -1,4 +1,9 @@
-m-tag
-=====
+m#
+==
 
-A flexible rules engine that uses the filesystem as a database
+m# (*mash*) provides:
+
++ A dead simple spec for representing *objects* with a set of *attributes*
++ A flexible *rules* engine to compute and verify attributes
+
+Documentation to follow!

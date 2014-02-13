@@ -1,0 +1,85 @@
+####################################################################################################
+#
+#  Self-test of the testing library to make sure it is working properly.
+#
+#  Authors:
+#    Karl Gluck
+#
+#---------------------------------------------------------------------------------------------------
+package require tcltools
+package require tcltools.diagnostics
+
+@on describe
+
+@describe "tcltools.diagnostics" {
+    it "Detects constant expressions" {
+        expect {a_nonexistant_variable} to be undefined
+        set a_set_variable 1
+        expect {a_set_variable} to be defined
+        expect {error "throw"} to throw an error
+        expect {1} to be truthy
+        expect {0} to be falsy
+        expect {12} to be equal to 12
+        expect {5} to be less than {12}
+        expect {4} to be greater than {-5}
+        expect {"tcl is fun"} to match {^\S+ is\s+\S+(?:ny)?$}
+        expect {[list "a" "b" "c"]} to contain "a"
+        expect {[list "a" "b" "c"]} to not contain "z"
+    }
+
+    it "Evaluates expressions and variables" {
+        set three 3
+        expect {1+2} to be equal to $three
+        expect {$three} to be less than 5
+        expect {[string range "Hello, world!" 0 4]} to match "Hello"
+    }
+
+    set list_abc [list "a" "b" "c"]
+    it "Handles variable expressions from outside 'it' scope" {
+        expect {list_abc} to be defined
+    }
+
+    @describe "An @describe subcontext" {
+        it "Does not bring in variables from the parent @describe context" {
+            expect {list_abc} to be undefined
+        }
+        upvar list_abc list_abc
+        it "Can use 'upvar' to share variables with the parent @describe context" {
+            expect {list_abc} to be defined
+        }
+    }
+
+    @describe "beforeEach" {
+        beforeEach {
+            catch { unset unset_by_before_each }
+        }
+        set unset_by_before_each 1
+        it "runs before the first 'it'" {
+            expect {unset_by_before_each} to be undefined
+        }
+        set unset_by_before_each 1
+        it "runs before every subsequent 'it'" {
+            expect {unset_by_before_each} to be undefined
+        }
+    }
+
+    @describe "afterEach" {
+        afterEach {
+            catch { unset unset_by_before_each }
+        }
+        set unset_by_before_each 1
+        it "doesn't run until after the first 'it'" {
+            expect {unset_by_before_each} to be defined
+        }
+        it "runs after the first 'it'" {
+            expect {unset_by_before_each} to be undefined
+            set unset_by_before_each 1
+        }
+        it "runs after every 'it'" {
+            expect {unset_by_before_each} to be undefined
+        }
+    }
+}
+
+@off describe
+

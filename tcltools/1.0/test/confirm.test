@@ -1,0 +1,22 @@
+################################################################################
+#
+# Test bench for the confirm {} proc
+#
+# Authors:
+#   Karl Gluck
+#
+#------------------------------------------------------------------------------- 
+package require tcltools
+package require tcltools.diagnostics
+
+@on describe
+
+# Switch to debug mode
+@on debug
+@off release
+source [tcltools_path src confirm.tcl] 
+
+# Switch to release mode
+@off debug
+@on release
+source [tcltools_path src confirm.tcl]

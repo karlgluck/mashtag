@@ -1,0 +1,40 @@
+#!/usr/bin/tclsh8.5
+####################################################################################################
+#
+#  Runs TclTools self-tests
+#
+#  Authors:
+#    Karl Gluck
+#
+#---------------------------------------------------------------------------------------------------
+set path [file dirname [file normalize [info script]]]
+source [file join $path .. package.tcl]
+package require tcltools
+package require tcltools.diagnostics
+
+# Move to the script path so that files can be sourced relatively
+set owd [pwd]
+cd $path
+
+if {[llength $argv]} {
+    foreach arg $argv {
+        foreach test_file [glob -nocomplain -type f [file join $path $arg]] {
+            if {[file dirname $test_file] eq $path} {
+                # shorten the test if it is local
+                set test_file [file tail $test_file]
+            }
+            source $test_file
+        }
+    }
+} else {
+
+    foreach test_file [glob -nocomplain -type f [file join $path "*.test"]] {
+        source [file tail $test_file]
+    }
+}
+
+# Restore old WD (just good practice)
+cd $owd
+
+# Print out all the test results
+puts [::tcltools::diagnostics::console_report]

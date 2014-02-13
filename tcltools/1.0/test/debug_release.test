@@ -1,0 +1,94 @@
+################################################################################
+#
+# Test bench for the @debug and @release procs
+#
+# Authors:
+#   Karl Gluck
+#
+#------------------------------------------------------------------------------- 
+package require tcltools
+package require tcltools.diagnostics
+
+@on describe
+
+@describe "@debug" {
+    @describe "when @on" {
+        @on debug
+
+        beforeEach {
+            catch { unset a_variable_set_by_debug }
+        }
+
+        it "returns 1" {
+            expect {[@debug]} to be equal to 1
+        }
+        it "evaluates a line of code" {
+            @debug set a_variable_set_by_debug 1
+            expect {a_variable_set_by_debug} to be defined
+        }
+        it "evaluates a block of code" {
+            @debug { set a_variable_set_by_debug 1 }
+            expect {a_variable_set_by_debug} to be defined
+        }
+    }
+    @describe "when @off" {
+        @off debug
+
+        beforeEach {
+            catch { unset a_variable_set_by_debug }
+        }
+
+        it "returns 0" {
+            expect {[@debug]} to be equal to 0
+        }
+        it "does not evaluate inline code" {
+            @debug set a_variable_set_by_debug 1
+            expect {a_variable_set_by_debug} to be undefined
+        }
+        it "does not evaluate a block of code" {
+            @debug { set a_variable_set_by_debug 1 }
+            expect {a_variable_set_by_debug} to be undefined
+        }
+    }
+}
+
+@describe "@release" {
+    @describe "when @on" {
+        @on release
+
+        beforeEach {
+            catch { unset a_variable_set_by_release }
+        }
+
+        it "returns 1" {
+            expect {[@release]} to be equal to 1
+        }
+        it "evaluates a line of code" {
+            @release set a_variable_set_by_release 1
+            expect {a_variable_set_by_release} to be defined
+        }
+        it "evaluates a block of code" {
+            @release { set a_variable_set_by_release 1 }
+            expect {a_variable_set_by_release} to be defined
+        }
+    }
+    @describe "when @off" {
+        @off release
+
+        beforeEach {
+            catch { unset a_variable_set_by_release }
+        }
+
+        it "returns 0" {
+            expect {[@release]} to be equal to 0
+        }
+        it "does not evaluate inline code" {
+            @release set a_variable_set_by_release 1
+            expect {a_variable_set_by_release} to be undefined
+        }
+        it "does not evaluate a block of code" {
+            @release { set a_variable_set_by_release 1 }
+            expect {a_variable_set_by_release} to be undefined
+        }
+    }
+}

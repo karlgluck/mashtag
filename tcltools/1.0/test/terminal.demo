@@ -1,0 +1,27 @@
+#!/usr/bin/tclsh8.5
+####################################################################################################
+#
+#  Runs TclTools self-tests
+#
+#  Authors:
+#    Karl Gluck
+#
+#---------------------------------------------------------------------------------------------------
+set path [file dirname [file normalize [info script]]]
+source [file join $path .. package.tcl]
+package require tcltools
+package require tcltools.terminal
+
+
+terminal write "<cls><e><r>Hello there!</>\n"
+terminal write "  * Hello!!<tsp><td>" 5
+terminal write " <b>This text will show up in a weird place!</>\n"
+terminal write "<tlp>Then this text will be back where we were before!"
+
+terminal write "\n\n"
+terminal color blue
+terminal write "This is in blue!"
+terminal emphasis
+terminal write "This is emphasized!"
+terminal reset
+terminal write "\nNow we are reset.\n\n\n"

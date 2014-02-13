@@ -1,0 +1,472 @@
+#!/usr/bin/env wish
+package require Tk
+
+if {![llength $argv]} {
+    puts stderr "syntax:  m# <options> {\"directory\" \"directory\" ...}"
+    puts stdout {
+m# (said 'mash') is a tool for inferencing properties of directory-based objects.
+
+Directories are specified on the command-line or by lines on stdin.
+
+    Options:
+
+        -source <args|stdin>
+
+            Where to read the directory list from.  Defaults to 'args'.  If
+            set to stdin, directories are read one per line from stdin.
+            Otherwise, stdin is ignored.
+
+        -rules <directories>
+
+            Directories from which to read the m# rules to evaluate.  Each file
+            starting with # in the directories listed here are considered to be
+            rules files.  Default is empty, in which case no rules are evaluated.
+
+        -write_results <on|off>
+
+            Defines whether to write mash.log and the computed tags to the input
+            directories.  Default is on.
+
+        -csv_out <path>
+
+            If provided, the file designated by the given path will be written
+            with a CSV of the properties of all the input objects.
+
+        -threads <number>
+
+            How many threads to execute concurrently for evaluating tags.
+            Defaults to 16.  Setting this value too high may cause resource
+            contention.
+
+        -io_channels <number>
+
+            The number of files to open simultaneously during concurrent I/O.
+            Up to a point, this increases the speed of loading m#tags.  Setting
+            this value too high may cause internal errors due to the limit on
+            the number of files a process can open at once.  Defaults to 256.
+
+        -batch_size <number>
+
+            The number of objects to load and process at once.  Setting this
+            value higher causes TCL to use more memory.  If it is too high,
+            you will get out of memory errors.  Defaults to 32.
+}
+
+    exit 0
+}
+
+# Additional command that can be called in rules interpreted with this tool.
+# If called, columns matching the given name will not appear in the CSV file
+# produced by the tool.
+proc ext_mash_dropcolumns {name} {
+    lappend ::_ext_mash_dropcolumns_list $name
+}
+proc ext_mash_dropcolumns.get {} {
+    global _ext_mash_dropcolumns_list
+    if {[info exists _ext_mash_dropcolumns_list]} {
+        return $_ext_mash_dropcolumns_list
+    } else {
+        return {}
+    }
+}
+
+#-------------------------------------------------------------------------------
+# Entry point to the application
+#
+# Authors:
+#   Karl Gluck
+#-------------------------------------------------------------------------------
+proc main {paths rules write_results csv_out io_channels threads batch_size} {
+   
+    # Test inputs 
+    if {[lempty $paths]} {
+        puts stderr "No paths to process."
+        exit 1
+    }
+
+    # Initialize the main window
+    # --------------------------
+    wm title . "m#tag Evaluator"
+
+    grid [set tb [frame .toolbar -bd 1 -relief raised]] -row 0 -column 0 -columnspan 3 -sticky news
+    pack [button .toolbar.exitButton -text "Exit" -relief flat -command {exit}] -side left -padx 2 -pady 2
+    #pack [checkbutton .toolbar.chk -text Styles] -side left -padx 2 -pady 2
+
+    grid [frame .progress_frame -bd 1 -relief groove -padx 10 -pady 10] -row 1 -column 0 -columnspan 3 -sticky news
+
+    global window vars
+    grid [set window(label_load_objects)          [label .progress_frame.label_load_objects -padx 10]] -row 1 -column 0 -sticky e
+    grid [set window(progress_load_objects)       [ttk::progressbar .progress_frame.progress_load_objects -variable vars(objects_scanned)]] -row 1 -column 1 -sticky ew
+    grid [set window(label_load_tags)             [label .progress_frame.label_load_tags -padx 10]] -row 2 -column 0 -sticky e
+    grid [set window(progress_load_tags)          [ttk::progressbar .progress_frame.progress_load_tags -variable vars(tags_loaded)]] -row 2 -column 1 -sticky ew
+    grid [set window(label_process_objects)       [label .progress_frame.label_process_objects -padx 10]] -row 4 -column 0 -sticky e
+    grid [set window(progress_process_objects)    [ttk::progressbar .progress_frame.progress_process_objects -variable vars(objects_processed)]] -row 4 -column 1 -sticky ew
+
+    grid [frame .email_frame -bd 1 -relief groove -padx 10 -pady 10] -row 2 -column 0 -columnspan 3 -sticky news
+    grid [set window(button_email) [button .email_frame.btn -text "Email Results" -command ::send_results_email]] -row 1 -column 1 -padx 10 -sticky news
+    grid forget $window(button_email)
+    grid [set window(check_email)  [checkbutton .email_frame.chk -text "  Email results to:" -variable vars(send_email) -command ::email_toggled]] -row 0 -column 0 -padx 10 -sticky news
+    grid [set window(text_email)  [text  .email_frame.text_email -height 4]] -row 1 -column 0 -sticky news
+
+    grid [set window(status_frame) [frame .status_frame -bd 1 -relief groove -padx 10 -pady 10]] -row 3 -column 0 -sticky news
+    grid [set window(status_label) [label .status_frame.status]] -row 0 -column 0 -sticky nes
+    grid [set window(status_sizegrip) [ttk::sizegrip .status_frame.sizegrip]] -row 0 -column 1 -sticky nws
+
+    email_toggled
+    grid columnconfigure . 0 -weight 1
+
+    grid rowconfigure . 2 -weight 1 ; # make the email area expand
+    grid rowconfigure .email_frame 1 -weight 1
+    grid columnconfigure .email_frame 0 -weight 1
+
+    grid rowconfigure .status_frame 0 -weight 1
+    grid columnconfigure .status_frame 0 -weight 1
+
+    # make the progress bars expand
+    grid columnconfigure .progress_frame 1 -weight 1
+
+    # Find all of the rules to evaluate
+    set all_rule_files [list]
+    foreach path $rules {
+        set rule_files [glob -nocomplain -types {f} [file join $path "#*"]]
+        set rule_files [lprocess $rule_files {r} { return [list [realpath $r]] }]
+        set all_rule_files [concat $all_rule_files $rule_files]
+    }
+
+    # Process the objects
+    set vars(path) [::mash::core $paths $io_channels $threads $batch_size $all_rule_files ::update_status]
+
+    # Write back the results and compute #errors
+    output_results $write_results
+
+    # Turn the results into a CSV file
+    if {$csv_out ne ""} {   
+        fwrite $csv_out [results_to_csv]
+        $window(status_label) configure -text "Wrote CSV $csv_out"
+    }
+
+    # Send the results out by email
+    if {$vars(send_email)} {
+        send_results_email
+    }
+
+    # Turn the "send email" checkbox into a button that sends email instead.
+    set vars(send_email) 1
+    email_toggled
+    grid forget $window(check_email)
+    grid $window(button_email) -column 0 -row 0
+    grid $window(text_email)
+}
+
+
+#---------------------------------------------------------------------------------------------------
+# Writes out mash.log and all of the m#tags to disk for each object
+#---------------------------------------------------------------------------------------------------
+proc output_results {write} {
+    global window vars
+
+    ::mash::core.foreach_result_in_file {result remaining} $vars(path) {
+        set mash_object_retval [lassign $result object old_properties]
+
+        # Create a "##errors" tag
+        set errors [list]
+        foreach e [lindex $mash_object_retval 1] {
+            lassign $e trace_index rule_ref property msg
+            set entry "$trace_index - $rule_ref :$msg"
+            lappend errors $entry
+        }
+        set errors [join $errors "\n"]
+
+        # Save out the newly created tags
+        if {$write} {
+            ::mash::write_properties $object [lindex $mash_object_retval 0]
+            ::mash::write_properties $object [list "#errors" $errors]
+        }
+        set vars(errors,$object) $errors
+        unset errors
+
+        # Write the log file
+        if {$write || ($remaining < [string length $result])} {
+            set txt [::mash::mash_object.results_to_txt $mash_object_retval $old_properties]
+            if {[catch {
+            if {$write} {
+                fwrite [set log [file join $object "mash.log"]] $txt
+            } else {
+                fwrite [set log [file join [pwd] "mash.log"]] $txt
+            }
+            }]} {
+                puts stderr "Couldn't write $log"
+            }
+            catch { file attributes $log -permissions ug+rw } ; # make sure it's user/group writable
+        }
+
+        if {$remaining > 0} {
+            $window(status_label) configure -text "Writing back tags ($remaining left)"
+        } else {
+            $window(status_label) configure -text ""
+        }
+        update
+    }
+}
+
+
+
+
+#---------------------------------------------------------------------------------------------------
+# Processes vars(results) into vars(results_csv) if the latter has not been set, and returns the
+# value.
+#---------------------------------------------------------------------------------------------------
+proc results_to_csv {} {
+    global window vars
+    if {[info exists vars(results_csv)]} { return $vars(results_csv) }
+
+    # Gather all the tag names and spreadsheet lines
+    array set all_tags { "#errors" {} }
+    array set spreadsheet {}
+    set index 0
+    set RE {\s|,}
+    ::mash::core.foreach_result_in_file {result remaining} $vars(path) {
+        lassign $result object old_properties new_properties - - - - -
+        set spreadsheet(object,${index}) $object
+        confirm {[info exists vars(errors,$object)]} then {
+            set spreadsheet($index,"#errors") [regsub -all $RE [regsub -all {\n} $vars(errors,$object) {; }] { }]
+        } else {
+            set spreadsheet($index,"#errors") "CRITICAL:  Object didn't have errors computed!"
+        }
+        foreach {tag value} $old_properties { set all_tags($tag) {} ; set spreadsheet($index,$tag) [regsub -all $RE [regsub -all {\n} $value {; }] { }] }
+        foreach {tag value} $new_properties { set all_tags($tag) {} ; set spreadsheet($index,$tag) [regsub -all $RE [regsub -all {\n} $value {; }] { }] }
+        incr index
+        update
+        $window(status_label) configure -text "Translating result length [string length $result] to CSV; $remaining to go"
+    }
+
+    # Drop columns using the extension
+    foreach column [ext_mash_dropcolumns.get] { array unset all_tags $column }
+
+    # Write out the spreadsheet
+    set columns [lsort -dictionary [array names all_tags]]
+    set rows [list path,[join $columns ","]]
+    for {set i 0} {$i < $index} {incr i} {
+        set line [realpath $spreadsheet(object,$i)]
+        foreach tag $columns {
+            append line ,
+            catch {append line $spreadsheet($i,$tag)}
+        }
+        lappend rows $line
+        $window(status_label) configure -text "Building CSV row $i of $index"
+        update
+    }
+
+    # This set (since it is the last line) also returns the value
+    set vars(results_csv) [join $rows \n]
+}
+
+# Constructs a cumulative profiling report about the execution time
+proc results_to_profiling {} {
+    global window vars
+    if {[info exists vars(results_profiling)]} { return $vars(results_profiling) }
+
+    # Accumulate all of the profiling data
+    array set profiling {}
+    ::mash::core.foreach_result_in_file {result remaining} $vars(path) {
+        lassign $result - - - - - - - result_profiling
+        foreach {k v} $result_profiling {
+            if {[catch {incr $profiling($k) $v}]} { set profiling($k) $v }
+        }
+        $window(status_label) configure -text "Reading profiling for [string length $result]; $remaining to go"
+        update
+    }
+
+    # Sort
+    set profiling_sort [list]
+    foreach {k v} [array get profiling] {
+        lappend profiling_sort [list $k $v]
+    }
+    set profiling_sort [lsort -index 1 -integer -decreasing $profiling_sort]
+
+    # Print totals+percentages
+    lassign [lindex $profiling_sort 0] - profiling_total
+    set txt [list]
+    foreach kv $profiling_sort {
+        lassign $kv k v
+        if {$k ne "total"} { set k [::_mash::rule_reference $k] }
+        set percent [format {%0.2f%%} [expr {(100.0*$v)/$profiling_total}]]
+        lappend txt [format {%16d %-8s %s} $v $percent $k]
+    }
+
+    # This set also returns the value
+    set vars(results_profiling) [join $txt \n]
+}
+
+proc send_results_email {} {
+    global window vars
+    $window(button_email) configure -state disabled
+    after 5000 { $::window(button_email) configure -state normal }
+
+    # Tell the user what's going on
+    $window(status_label) configure -text "Sending email... (this can take a while)"
+
+    # grab the recipients of the email from the text box
+    set to [$window(text_email) get 1.0 end]
+
+    # craft a message
+    set objects_processed "Unknown"
+    set tags_loaded "Unknown"
+    catch { set objects_processed $vars(objects_processed) }
+    catch { set tags_loaded $vars(tags_loaded) }
+    set html_message [format {
+<html>
+<head><style type="text/css">body { font-family: 'Trebuchet MS','Tahoma',sans-serif; }</style></head><body>
+<h2>%s Objects Processed</h2>
+<p>A rollup of all %s m#tags from the processed directories is attached.</p>
+<p>Below is a trace of the execution time:</p><pre>%s</pre>
+</body></html>} $objects_processed $tags_loaded [results_to_profiling]]
+
+    # roll up an attachment
+    set attachments [list]
+    lappend attachments [list "text/plain" "spreadsheet.csv" [results_to_csv]]
+
+    # send the email
+    send_email $to \
+               "$objects_processed M#Tag Results" \
+               $html_message \
+               $to \
+               $attachments
+
+    $window(button_email) configure -text "Email Results (already sent)"
+}
+
+#-------------------------------------------------------------------------------
+# Invoked when the email checkbox is ticked
+#
+# Authors:
+#   Karl Gluck
+#-------------------------------------------------------------------------------
+proc email_toggled {} {
+    global window vars
+    if {$vars(send_email)} {
+        $window(text_email) configure -background #FFF
+        $window(text_email) configure -state normal
+    } else {
+        $window(text_email) configure -background #888
+        $window(text_email) configure -state disabled
+    }
+}
+
+#-------------------------------------------------------------------------------
+# Called periodically during m#tag core evaluation to update the status of the
+# display.
+#
+# Authors:
+#   Karl Gluck
+#-------------------------------------------------------------------------------
+proc update_status {objects_count objects_scanned objects_processed tags_count tags_loaded} { 
+    global window vars
+
+    # Estimate or set total tags
+    if {$objects_count == $objects_scanned || ($objects_scanned == 0)} {
+        set total_tags_count $tags_count
+    } else {
+        set total_tags_count [expr {int(((1.0 * $tags_count) / $objects_scanned) * $objects_count)}]
+    }
+
+    # Configure progress bars 
+    set vars(objects_scanned) $objects_scanned
+    set vars(tags_loaded) $tags_loaded
+    set vars(objects_processed) $objects_processed
+    $window(progress_load_objects) configure -maximum $objects_count
+    $window(progress_load_tags) configure -maximum $total_tags_count
+    $window(progress_process_objects) configure -maximum $objects_count
+
+    # Set labels
+    $window(label_load_objects) configure -text "Scanned $objects_scanned / $objects_count"
+    $window(label_load_tags) configure -text "Loaded $tags_loaded / $total_tags_count tags"
+    $window(label_process_objects) configure -text "Processed $objects_processed / $objects_count objects"
+  
+}
+
+
+# Load external libraries
+set root [file dirname [file normalize [info script]]]
+source [file join $root tcltools "1.0" package.tcl]
+source [file join $root send_email.tcl]
+package require tcltools
+package require tcltools.terminal
+
+# Load m# libraries
+source [file join $root "engine.tcl"]
+source [file join $root "language.tcl"]
+
+#------------------------------------------------------------------------------- 
+# Macro to be called from the top-level of a script.  This sets global variables
+# based on either default values or input to the script (in argv).  If any
+# variable is not defined, an error is thrown with a message indicating
+# which switches are missing.
+#
+# Authors:
+#   Karl Gluck
+#------------------------------------------------------------------------------- 
+proc GET_SCRIPT_SWITCHES {args} {
+
+    # set default values and make sure variables are in the caller's context
+    foreach arg $args {
+        lassign $arg var default_value
+        upvar $var $var
+        if {[llength $arg] > 1} {
+            set $var $default_value
+        }
+    }
+
+    # grab parameters from the global context
+    set argv ${::argv}
+    set args_removed [list]
+    while {[llength $argv]} {
+        set argv [lassign $argv sw]
+        foreach arg $args {
+            set p [lindex $arg 0]
+            if {"-$p" eq $sw} {
+                set argv [lassign $argv $p]
+                lappend args_removed "-$p" [set $p]
+                break
+            }
+        }
+    }
+
+    # check to make sure everything exists
+    set errors [list]
+    foreach arg $args {
+        if {![info exists [set p [lindex $arg 0]]]} {
+            lappend errors " -$p is a required argument"
+        }
+    }
+
+    # throw an error for missing arguments
+    if {[llength $errors]} { error [join $errors \n] }
+
+    # return only the arguments that were not processed
+    lassign [intersect3 ${::argv} $args_removed] argv
+    return $argv
+}
+
+if {[catch { set argv [GET_SCRIPT_SWITCHES {source args} \
+                                           {rules {}} \
+                                           {write_results on} \
+                                           {threads 16} \
+                                           {io_channels 256} \
+                                           {batch_size 32} \
+                                           {csv_out {}}] } msg]} {
+    puts stderr $msg
+    exit -1
+}
+
+# Interpret options
+set paths [expr {$source eq "stdin" ? [split [read -nonewline stdin] \n] : $argv}]
+set paths [lprocess $paths {line} {
+    if {[file isdirectory $line]} { return [list $line] }
+    return {}
+}]
+
+set write_results [expr {0 == [string compare -nocase "on" $write_results]}]
+
+main $paths $rules $write_results $csv_out $io_channels $threads $batch_size
+
