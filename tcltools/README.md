@@ -18,4 +18,4 @@ This library contains a lot of common time-saving functionality into a single pa
 Wait, but this looks like it would be really useful on its own!
 ---------------------------------------------------------------
 
-Thanks! TclTools is released and maintained separately at [karlgluck / TclTools](https://github.com/karlgluck). The version included here is for ensuring compatibility, since this tool is self-contained and "done" as-is. You should use a fresh copy from the main branch if you want to do development. You'll also find a lot of documentation there!
+Thanks! TclTools is released and maintained separately at [karlgluck / TclTools](https://github.com/karlgluck/tcltools). The version included here is for ensuring compatibility, since this tool is self-contained and "done" as-is. You should use a fresh copy from the main branch if you want to do development. You'll also find a lot of documentation there!
